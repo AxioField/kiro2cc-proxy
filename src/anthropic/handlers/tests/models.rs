@@ -283,6 +283,31 @@ mod tests {
     }
 
     #[test]
+    fn test_build_model_list_includes_55_models() {
+        let list = build_model_list();
+        let ids: std::collections::HashSet<&str> = list.iter().map(|m| m.id.as_str()).collect();
+
+        for id in [
+            "claude-opus-5.5",
+            "claude-opus-5.5-thinking",
+            "claude-sonnet-5.5",
+            "claude-sonnet-5.5-thinking",
+            "claude-haiku-5.5",
+            "claude-haiku-5.5-thinking",
+        ] {
+            assert!(ids.contains(id), "缺 {id} 静态表项");
+        }
+
+        assert_eq!(find_by_id("claude-opus-5.5").unwrap().max_tokens, 128000);
+        assert_eq!(
+            find_by_id("claude-opus-5.5-thinking").unwrap().max_tokens,
+            128000
+        );
+        assert_eq!(find_by_id("claude-sonnet-5.5").unwrap().max_tokens, 64000);
+        assert_eq!(find_by_id("claude-haiku-5.5").unwrap().max_tokens, 64000);
+    }
+
+    #[test]
     fn test_sonnet_4_6_max_tokens_unchanged() {
         // 回归
         assert_eq!(find_by_id("claude-sonnet-4-6").unwrap().max_tokens, 64000);

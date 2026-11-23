@@ -582,16 +582,34 @@ pub(crate) fn kiro_ide_user_agents(
     }
 }
 
-/// 给请求附加 Kiro IDE 风格的通用头（UA 指纹 + SDK 调用标识）。
+/// External IdP 账号的控制面请求必须携带 `TokenType: EXTERNAL_IDP`。
+///
+/// Kiro 对 `external_idp` token 的身份类判定与普通 OAuth token 不同；数据面
+/// (`build_headers`) 早已注入该头，但控制面（getUsageLimits / ListAvailableModels /
+/// ListAvailableProfiles）此前遗漏，导致同一 token 在数据面可用、控制面返回
+/// `AccessDeniedException: Invalid token`。
+fn apply_external_idp_token_type(
+    request: reqwest::RequestBuilder,
+    credentials: &KiroCredentials,
+) -> reqwest::RequestBuilder {
+    match credentials.external_idp_token_type() {
+        Some(token_type) => request.header("TokenType", token_type),
+        None => request,
+    }
+}
+
+/// 给请求附加 Kiro IDE 风格的通用头（UA 指纹 + SDK 调用标识 + External IdP TokenType）。
 pub(crate) fn with_kiro_ide_headers(
     request: reqwest::RequestBuilder,
     agents: &KiroIdeUserAgents,
+    credentials: &KiroCredentials,
 ) -> reqwest::RequestBuilder {
-    request
+    let request = request
         .header("x-amz-user-agent", &agents.amz_user_agent)
         .header("User-Agent", &agents.user_agent)
         .header("amz-sdk-invocation-id", uuid::Uuid::new_v4().to_string())
-        .header("amz-sdk-request", AMZ_SDK_REQUEST_SINGLE_ATTEMPT)
+        .header("amz-sdk-request", AMZ_SDK_REQUEST_SINGLE_ATTEMPT);
+    apply_external_idp_token_type(request, credentials)
 }
 
 /// 额度查询的共用发送逻辑：Kiro IDE 风格请求头 + 状态码分类。
@@ -613,7 +631,7 @@ async fn send_usage_limits_request(
     // 避免复用 idToken 导致 403 Invalid token（见 issue #31）。非 IdC 账号保持原逻辑不变。
     let effective_token = select_usage_limits_token(credentials, token);
 
-    let response = with_kiro_ide_headers(client.get(url), &agents)
+    let response = with_kiro_ide_headers(client.get(url), &agents, credentials)
         .header("host", host)
         .header("Authorization", format!("Bearer {}", effective_token))
         .header("Connection", "close")
@@ -707,14 +725,15 @@ pub(crate) async fn list_available_models(
 
     let client = build_client(proxy, LIST_MODELS_TIMEOUT_SECS, config.tls_backend)?;
 
-    let response = client
+    let request = client
         .post(&url)
         .header("content-type", "application/x-amz-json-1.0")
         .header(
             "x-amz-target",
             "AmazonCodeWhispererService.ListAvailableModels",
         )
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {}", token));
+    let response = apply_external_idp_token_type(request, credentials)
         .json(&body)
         .send()
         .await?;
@@ -781,6 +800,7 @@ pub(crate) async fn list_available_profiles(
     let rest = with_kiro_ide_headers(
         client.post(format!("https://{}/ListAvailableProfiles", host)),
         &agents,
+        credentials,
     )
     .header("content-type", "application/json")
     .header("Authorization", format!("Bearer {}", token))
@@ -793,14 +813,18 @@ pub(crate) async fn list_available_profiles(
     };
 
     // 形态 B：AWS JSON 1.0（x-amz-target）；请求头与形态 A 保持一致，便于对比排查
-    let rpc = with_kiro_ide_headers(client.post(format!("https://{}/", host)), &agents)
-        .header("content-type", "application/x-amz-json-1.0")
-        .header(
-            "x-amz-target",
-            "AmazonCodeWhispererService.ListAvailableProfiles",
-        )
-        .header("Authorization", format!("Bearer {}", token))
-        .json(&serde_json::json!({ "maxResults": 10 }));
+    let rpc = with_kiro_ide_headers(
+        client.post(format!("https://{}/", host)),
+        &agents,
+        credentials,
+    )
+    .header("content-type", "application/x-amz-json-1.0")
+    .header(
+        "x-amz-target",
+        "AmazonCodeWhispererService.ListAvailableProfiles",
+    )
+    .header("Authorization", format!("Bearer {}", token))
+    .json(&serde_json::json!({ "maxResults": 10 }));
     send_list_profiles(rpc).await.map_err(|rpc_err| {
         anyhow::anyhow!(
             "获取可用 profile 列表失败: [REST {}] / [JSON-RPC {}]",

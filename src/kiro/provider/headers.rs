@@ -92,13 +92,8 @@ impl KiroProvider {
             headers.insert("x-amz-target", HeaderValue::from_static(target));
         }
 
-        if ctx
-            .credentials
-            .auth_method
-            .as_deref()
-            .is_some_and(|m| m.eq_ignore_ascii_case("external_idp"))
-        {
-            headers.insert("TokenType", HeaderValue::from_static("EXTERNAL_IDP"));
+        if let Some(token_type) = ctx.credentials.external_idp_token_type() {
+            headers.insert("TokenType", HeaderValue::from_static(token_type));
         }
 
         Ok(headers)
@@ -170,6 +165,13 @@ impl KiroProvider {
             "Authorization",
             HeaderValue::from_str(&format!("Bearer {}", ctx.token)).unwrap(),
         );
+
+        // MCP 走 q.{region}.amazonaws.com 控制面，External IdP 同样需要身份类头，
+        // 否则上游按普通 OAuth token 校验会返回 Invalid token。
+        if let Some(token_type) = ctx.credentials.external_idp_token_type() {
+            headers.insert("TokenType", HeaderValue::from_static(token_type));
+        }
+
         Ok(headers)
     }
 }

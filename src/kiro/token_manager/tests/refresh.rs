@@ -553,7 +553,7 @@ pub(crate) mod tests {
             "https://example.com/ListAvailableProfiles",
             "https://example.com/",
         ] {
-            let req = with_kiro_ide_headers(client.post(url), &agents)
+            let req = with_kiro_ide_headers(client.post(url), &agents, &credentials)
                 .build()
                 .unwrap();
             let h = req.headers();
@@ -564,6 +564,29 @@ pub(crate) mod tests {
             );
             assert!(h.contains_key("amz-sdk-invocation-id"));
             assert_eq!(h["amz-sdk-request"], "attempt=1; max=1");
+            // 普通账号不应带 External IdP 身份类头
+            assert!(!h.contains_key("TokenType"));
+        }
+    }
+
+    #[test]
+    fn test_kiro_ide_headers_add_external_idp_token_type() {
+        let credentials = KiroCredentials {
+            auth_method: Some("external_idp".to_string()),
+            ..Default::default()
+        };
+        let config = crate::model::config::Config::default();
+        let agents = kiro_ide_user_agents(&credentials, &config);
+        let client = reqwest::Client::new();
+
+        for url in [
+            "https://example.com/ListAvailableProfiles",
+            "https://example.com/getUsageLimits",
+        ] {
+            let req = with_kiro_ide_headers(client.get(url), &agents, &credentials)
+                .build()
+                .unwrap();
+            assert_eq!(req.headers()["TokenType"], "EXTERNAL_IDP");
         }
     }
 

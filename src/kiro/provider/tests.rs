@@ -73,6 +73,41 @@ mod tests {
     }
 
     #[test]
+    fn test_build_headers_external_idp_token_type() {
+        let config = Config::default();
+        let credentials = KiroCredentials {
+            auth_method: Some("external_idp".to_string()),
+            ..Default::default()
+        };
+        let provider = create_test_provider(config, credentials.clone());
+        let ctx = CallContext {
+            id: 1,
+            credentials,
+            token: "test_token".to_string(),
+        };
+        let endpoint = Endpoint::by_name(EndpointName::Ide, "us-east-1");
+        let headers = provider.build_headers(&ctx, "{}", 0, &endpoint).unwrap();
+        assert_eq!(headers.get("TokenType").unwrap(), "EXTERNAL_IDP");
+    }
+
+    #[test]
+    fn test_build_mcp_headers_external_idp_token_type() {
+        let config = Config::default();
+        let credentials = KiroCredentials {
+            auth_method: Some("external_idp".to_string()),
+            ..Default::default()
+        };
+        let provider = create_test_provider(config, credentials.clone());
+        let ctx = CallContext {
+            id: 1,
+            credentials,
+            token: "test_token".to_string(),
+        };
+        let headers = provider.build_mcp_headers(&ctx, 0).unwrap();
+        assert_eq!(headers.get("TokenType").unwrap(), "EXTERNAL_IDP");
+    }
+
+    #[test]
     fn test_is_monthly_request_limit_detects_reason() {
         let body = r#"{"message":"You have reached the limit.","reason":"MONTHLY_REQUEST_COUNT"}"#;
         assert!(KiroProvider::is_monthly_request_limit(body));

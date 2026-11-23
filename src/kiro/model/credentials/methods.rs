@@ -155,6 +155,24 @@ impl KiroCredentials {
         }
     }
 
+    /// 是否 External IdP 账号（Microsoft Entra ID / Azure AD 等企业 SSO）
+    ///
+    /// 与 `refresh_token` 的判定保持一致：`AzureAD` / `EntraID` 会先归一为
+    /// `external_idp`，因此这里统一走 `canonicalize_auth_method_value`。
+    pub fn is_external_idp(&self) -> bool {
+        self.auth_method
+            .as_deref()
+            .is_some_and(|m| canonicalize_auth_method_value(m.trim()) == "external_idp")
+    }
+
+    /// External IdP 账号在控制面/数据面请求中需要携带的 `TokenType` 值。
+    ///
+    /// Kiro 控制面（ListAvailableModels / getUsageLimits / ListAvailableProfiles）
+    /// 与 MCP 请求同样要求该头；缺失时上游返回 `Invalid token`。
+    pub fn external_idp_token_type(&self) -> Option<&'static str> {
+        self.is_external_idp().then_some("EXTERNAL_IDP")
+    }
+
     /// 是否企业版 IdC 租户账号：IdC 登录且持有租户自己的真实 profileArn
     ///
     /// 这类账号由组织授权，不会是 Free；个人 BuilderId 使用的是代理占位 ARN，不在此列。
@@ -163,11 +181,21 @@ impl KiroCredentials {
         self.is_idc() && !self.has_no_real_profile_arn()
     }
 
+    /// 是否企业租户身份：IdC 或 External IdP，且持有租户自己的真实 profileArn
+    ///
+    /// External IdP（Microsoft Entra ID / Azure AD）与 IdC 一样由组织授权，
+    /// 不能按「订阅等级未知」排除出 Opus 路由。真实 profileArn 仍是从
+    /// `ListAvailableProfiles` 发现后才能确认租户身份（与 IdC 一致）。
+    pub fn is_tenant_identity(&self) -> bool {
+        (self.is_idc() || self.is_external_idp()) && !self.has_no_real_profile_arn()
+    }
+
     /// 检查账号是否支持 Opus 模型
     ///
     /// - 有订阅标题：非 Free 才支持（标题含 FREE 一律不支持）
-    /// - 无订阅标题：仅企业版 IdC 租户账号（见 [`Self::is_tenant_idc`]）支持，
-    ///   其余等级未知的账号（含个人 BuilderId）仍不支持
+    /// - 无订阅标题：企业版 IdC 租户账号或 External IdP 企业账号
+    ///   （见 [`Self::is_tenant_identity`]）支持，其余等级未知的账号
+    ///   （含个人 BuilderId）仍不支持
     pub fn supports_opus(&self) -> bool {
         match self
             .subscription_title
@@ -176,7 +204,7 @@ impl KiroCredentials {
             .filter(|title| !title.is_empty())
         {
             Some(title) => !title.to_uppercase().contains("FREE"),
-            None => self.is_tenant_idc(),
+            None => self.is_tenant_identity(),
         }
     }
 }

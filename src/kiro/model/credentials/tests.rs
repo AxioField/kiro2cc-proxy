@@ -52,6 +52,79 @@ mod tests {
     }
 
     #[test]
+    fn test_supports_opus_external_idp_without_title_is_allowed() {
+        // External IdP（Entra ID / Azure AD）与 IdC 租户一样由组织授权；
+        // 有真实 profileArn 时，上游不返回订阅标题也应允许 Opus。
+        for title in [None, Some(""), Some("   ")] {
+            for auth_method in ["external_idp", "AzureAD", "EntraID"] {
+                let credentials = KiroCredentials {
+                    auth_method: Some(auth_method.to_string()),
+                    profile_arn: Some(TENANT_ARN.to_string()),
+                    subscription_title: title.map(str::to_string),
+                    ..Default::default()
+                };
+                assert!(credentials.is_external_idp(), "auth_method={auth_method}");
+                assert!(
+                    credentials.is_tenant_identity(),
+                    "auth_method={auth_method}"
+                );
+                assert!(
+                    credentials.supports_opus(),
+                    "auth_method={auth_method}, title={title:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_supports_opus_external_idp_without_real_profile_arn_stays_rejected() {
+        // 与 IdC 一致：占位 / 备用 / 缺失 ARN 不能证明租户身份。
+        for arn in [
+            None,
+            Some(""),
+            Some(BUILDER_ID_PLACEHOLDER_PROFILE_ARN),
+            Some(ENTERPRISE_FALLBACK_PROFILE_ARN_US),
+            Some(ENTERPRISE_FALLBACK_PROFILE_ARN_EU),
+        ] {
+            let credentials = KiroCredentials {
+                auth_method: Some("external_idp".to_string()),
+                profile_arn: arn.map(str::to_string),
+                subscription_title: None,
+                ..Default::default()
+            };
+            assert!(credentials.is_external_idp());
+            assert!(!credentials.is_tenant_identity(), "arn={arn:?}");
+            assert!(!credentials.supports_opus(), "arn={arn:?}");
+        }
+    }
+
+    #[test]
+    fn test_external_idp_token_type_aliases() {
+        for auth_method in ["external_idp", "AzureAD", "EntraID", "azuread", "entraid"] {
+            let credentials = KiroCredentials {
+                auth_method: Some(auth_method.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(
+                credentials.external_idp_token_type(),
+                Some("EXTERNAL_IDP"),
+                "auth_method={auth_method}"
+            );
+        }
+        for auth_method in [None, Some("social"), Some("idc")] {
+            let credentials = KiroCredentials {
+                auth_method: auth_method.map(str::to_string),
+                ..Default::default()
+            };
+            assert_eq!(
+                credentials.external_idp_token_type(),
+                None,
+                "auth_method={auth_method:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_supports_opus_tenant_idc_with_explicit_free_title_is_rejected() {
         // 明确的 Free 标题优先于租户身份
         let credentials = KiroCredentials {
